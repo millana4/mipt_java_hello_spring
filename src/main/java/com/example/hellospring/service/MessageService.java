@@ -1,96 +1,103 @@
 package com.example.hellospring.service;
 
+import com.example.hellospring.dto.MessageResponse;
 import com.example.hellospring.entity.Message;
-import com.example.hellospring.exception.MessageNotFoundException;
-import com.example.hellospring.repository.JdbcMessageRepository;
-import com.example.hellospring.repository.JdbcUserRepository;
+import com.example.hellospring.entity.User;
+import com.example.hellospring.repository.MessageRepository;
+import com.example.hellospring.repository.UserRepository;
+import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.hibernate.Hibernate;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 @Service
 public class MessageService {
-    private static final int MAX_PAGE_SIZE = 100;
-    private static final int MAX_BATCH_SIZE = 1000;
 
-    private final JdbcMessageRepository repository;
-    private final JdbcUserRepository userRepository;
+    private final MessageRepository messageRepository;
+    private final UserRepository userRepository;
 
-    public MessageService(JdbcMessageRepository repository, JdbcUserRepository userRepository) {
-        this.repository = repository;
+    public MessageService(MessageRepository messageRepository, UserRepository userRepository) {
+        this.messageRepository = messageRepository;
         this.userRepository = userRepository;
-        // Инициализировать БД тестовыми данными при старте
         initializeSampleData();
     }
 
     private void initializeSampleData() {
-        repository.clear();
-        saveMessage(new Message("Hello, JDBC Spring!", "System"));
-        saveMessage(new Message("Now using Postgres database via JdbcTemplate.", "Admin"));
-    }
+        // Создание пользователей
+        User user1 = userRepository.save(new User("Alice"));
+        User user2 = userRepository.save(new User("Bob"));
 
-    public List<Message> getMessages(int page, int size, String author) {
-        if (page < 0) {
-            throw new IllegalArgumentException("Номер страницы не может быть отрицательным");
-        }
-        if (size < 1 || size > MAX_PAGE_SIZE) {
-            throw new IllegalArgumentException("Размер страницы должен быть от 1 до " + MAX_PAGE_SIZE);
-        }
-        long offset = (long) page * size;
-
-        if (author != null && !author.isBlank()) {
-            return repository.findPageByAuthor(author.trim(), size, offset);
-        }
-        return repository.findPage(size, offset);
-    }
-
-    public Message getMessageById(Long id) {
-        return repository.findById(id)
-                .orElseThrow(() -> new MessageNotFoundException(id));
+        // Создание сообщений
+        messageRepository.save(new Message("Hello, JPA and Hibernate!", user1));
+        messageRepository.save(new Message("This uses Spring Data JPA interface.", user2));
+        messageRepository.save(new Message("Relationships are now managed by ORM.", user1));
     }
 
     @Transactional
-    public Message saveMessage(Message message) {
-        if (message.getContent() == null || message.getContent().isBlank()) {
-            throw new IllegalArgumentException("Текст сообщения не может быть пустым");
-        }
-        Long userId = userRepository.findOrCreate(message.getAuthor()).getId();
-        message.setUserId(userId);
-        return repository.save(message);
+    public Message saveMessage(String content, String username) {
+        // 1. Найти существующего пользователя или создать нового
+        User author = userRepository.findByUsername(username)
+                .orElseGet(() -> userRepository.save(new User(username)));
+
+        // 2. Создать и сохранить сообщение
+        Message message = new Message(content, author);
+        return messageRepository.save(message);
     }
+
+    //Вариант А: Проблема N+1 -- один запрос за сообщениями + по запросу на каждого автора
+    @Transactional
+    public List<Message> getLatestMessagesNPlus1() {
+        System.out.println("--- ЗАПРОС N+1 ---");
+        List<Message> messages = messageRepository.findTop30ByOrderByCreatedAtDesc();
+
+        // Принудительная загрузка автора для избежания Proxy Exception в контроллере.
+        messages.forEach(m -> m.getAuthor().getUsername());
+
+        return messages;
+    }
+
+    /**
+     * Вариант B: Решение проблемы N+1 с помощью JOIN FETCH.
+     * Все данные загружаются ОДНИМ запросом.
 
     @Transactional
-    public List<Message> saveMessages(List<Message> messages) {
-        if (messages == null || messages.isEmpty()) {
-            throw new IllegalArgumentException("Список сообщений не может быть пустым");
-        }
-        if (messages.size() > MAX_BATCH_SIZE) {
-            throw new IllegalArgumentException("За один раз можно создать не больше " + MAX_BATCH_SIZE + " сообщений");
-        }
-        for (int i = 0; i < messages.size(); i++) {
-            Message message = messages.get(i);
-            if (message == null || message.getContent() == null || message.getContent().isBlank()) {
-                throw new IllegalArgumentException("Сообщение №" + (i + 1) + ": текст не может быть пустым");
-            }
-        }
+    public List<Message> getLatestMessagesOptimized() {
+        System.out.println("--- ОПТИМИЗИРОВАННЫЙ ЗАПРОС JOIN FETCH ---");
+        return messageRepository.findLatestWithAuthors();
+    }
+     */
 
-        Map<String, Long> userIds = new HashMap<>();
-        for (Message message : messages) {
-            Long userId = userIds.computeIfAbsent(message.getAuthor(),
-                    name -> userRepository.findOrCreate(name).getId());
-            message.setUserId(userId);
-        }
 
-        return repository.saveAll(messages);
+    /**
+     * Вариант B: Решение проблемы N+1 с помощью @EntityGraph.
+     * Все данные загружаются ОДНИМ запросом.
+     */
+    @Transactional
+    public List<Message> getLatestMessagesOptimized() {
+        System.out.println("--- ОПТИМИЗИРОВАННЫЙ ЗАПРОС @EntityGraph ---");
+        return messageRepository.findTop30WithAuthorByOrderByCreatedAtDesc();
     }
 
-    public void deleteMessage(Long id) {
-        int deleted = repository.deleteById(id);
-        if (deleted == 0) {
-            throw new MessageNotFoundException(id);
-        }
+    /**
+    // Демонстрация LazyInitializationException: метод НЕ помечен @Transactional
+    public Message getMessageToFail(Long id) {
+        return messageRepository.findById(id).orElseThrow();
+    }
+     */
+    // Способ JPA: транзакция держит сессию открытой, пока выполняется метод
+    /**
+    @Transactional
+    public Message getMessageToFail(Long id) {
+        Message message = messageRepository.findById(id).orElseThrow();
+        Hibernate.initialize(message.getAuthor());
+        return message;
+    }
+    */
+
+    // Способ DTO: автор загружается тем же запросом, а наружу отдаётся DTO без объектов
+    public MessageResponse getMessageToFail(Long id) {
+        Message message = messageRepository.findWithAuthorById(id).orElseThrow();
+        return MessageResponse.from(message);
     }
 }

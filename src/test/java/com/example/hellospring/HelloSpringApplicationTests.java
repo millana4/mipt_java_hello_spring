@@ -8,46 +8,70 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
-import static org.hamcrest.Matchers.*;
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@Transactional
 class HelloSpringApplicationTests {
 	@Autowired
 	private MockMvc mockMvc;
 
 	@Test
-	void getMessagesEndpointReturnsInitialData() throws Exception {
-		mockMvc.perform(get("/api/messages").contextPath("/api"))
+	void optimizedEndpointReturnsMessagesWithAuthors() throws Exception {
+		mockMvc.perform(get("/api/messages/optimized").contextPath("/api"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$", hasSize(2))) // Проверка, что 2 тестовых сообщения загружены
-				.andExpect(jsonPath("$[0].author", is(notNullValue()))) // Проверка наличия поля «author»
-				.andExpect(jsonPath("$[0].content", anyOf(
-						is("Hello, JDBC Spring!"),
-						is("Now using Postgres database via JdbcTemplate."))
-				));
+				.andExpect(jsonPath("$", hasSize(3)))
+				.andExpect(jsonPath("$[*].author.username", everyItem(notNullValue())));
 	}
 
 	@Test
-	void postMessagesEndpointCreatesNewMessage() throws Exception {
-		String jsonPayload = "{\"content\": \"New message via POST\", \"author\": \"Tester\"}";
+	void nPlusOneEndpointReturnsMessagesWithAuthors() throws Exception {
+		mockMvc.perform(get("/api/messages/nplus1").contextPath("/api"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$", hasSize(3)))
+				.andExpect(jsonPath("$[*].author.username", everyItem(notNullValue())));
+	}
 
-		// 1. Отправка POST-запроса
+	@Test
+	void messageEndpointReturnsDto() throws Exception {
+		mockMvc.perform(get("/api/messages/fail/1").contextPath("/api"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id", is(1)))
+				.andExpect(jsonPath("$.content", is("Hello, JPA and Hibernate!")))
+				.andExpect(jsonPath("$.authorUsername", is("Alice")))
+				.andExpect(jsonPath("$.author").doesNotExist());
+	}
+
+	@Test
+	@Transactional // Откатывает созданное сообщение после теста
+	void postCreatesMessageAndUser() throws Exception {
+		String jsonPayload = "{\"content\": \"New message via POST\", \"username\": \"Tester\"}";
+
 		mockMvc.perform(post("/api/messages").contextPath("/api")
 						.contentType(MediaType.APPLICATION_JSON)
 						.content(jsonPayload))
-				.andExpect(status().isCreated()) // Ожидаем 201 Created
-				.andExpect(jsonPath("$.id", is(notNullValue()))) // Проверяем, что ID сгенерирован
-				.andExpect(jsonPath("$.author", is("Tester")))
-				.andExpect(jsonPath("$.content", is("New message via POST")));
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.id", is(notNullValue())))
+				.andExpect(jsonPath("$.content", is("New message via POST")))
+				.andExpect(jsonPath("$.author.username", is("Tester")));
 
-		// 2. Проверка увеличения общего количества сообщений (было 2 — стало 3)
-		mockMvc.perform(get("/api/messages").contextPath("/api"))
+		mockMvc.perform(get("/api/messages/optimized").contextPath("/api"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$", hasSize(3)));
+				.andExpect(jsonPath("$", hasSize(4)));
+	}
+
+	@Test
+	@Transactional
+	void postWithoutUsernameUsesAnonymous() throws Exception {
+		String jsonPayload = "{\"content\": \"No author\"}";
+
+		mockMvc.perform(post("/api/messages").contextPath("/api")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(jsonPayload))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.author.username", is("Anonymous")));
 	}
 }

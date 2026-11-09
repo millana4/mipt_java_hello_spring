@@ -1,11 +1,16 @@
 package com.example.hellospring.controller;
 
+import com.example.hellospring.dto.MessageResponse;
 import com.example.hellospring.entity.Message;
 import com.example.hellospring.service.MessageService;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+
+// DTO для удобного приёма данных от клиента
+record CreateMessageRequest(String content, String username) {}
 
 @RestController
 @RequestMapping("/messages")
@@ -16,43 +21,44 @@ public class MessageController {
         this.service = service;
     }
 
-    @GetMapping
-    public List<Message> getMessages(@RequestParam(defaultValue = "0") int page,
-                                     @RequestParam(defaultValue = "30") int size,
-                                     @RequestParam(required = false) String author) {
-        return service.getMessages(page, size, author);
+    // GET /api/messages/optimized. Рекомендуемый подход: 1 SQL запрос для сообщений и авторов.
+    @GetMapping("/optimized")
+    public List<Message> getMessagesOptimized() {
+        return service.getLatestMessagesOptimized();
     }
 
-    @GetMapping("/{id}")
-    public Message getMessage(@PathVariable Long id) {
-        return service.getMessageById(id);
+    // GET /api/messages/nplus1. Проблема N+1: будет выполнено N+1 запросов к базе данных.
+    @GetMapping("/nplus1")
+    public List<Message> getMessagesNPlus1() {
+        return service.getLatestMessagesNPlus1();
     }
 
+    // POST /api/messages. Добавляет новое сообщение.
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED) // 201 Created
-    public Message createMessage(@RequestBody Message message) {
-        // автор указан, если нет —  «Anonymous»
-        if (message.getAuthor() == null || message.getAuthor().trim().isEmpty()) {
-            message.setAuthor("Anonymous");
-        }
-        return service.saveMessage(message);
+    @ResponseStatus(HttpStatus.CREATED)
+    public Message createMessage(@RequestBody CreateMessageRequest request) {
+        String username = (request.username() == null || request.username().trim().isEmpty())
+                ? "Anonymous"
+                : request.username();
+
+        return service.saveMessage(request.content(), username);
     }
 
-    @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT) // 204 No Content
-    public void deleteMessage(@PathVariable Long id) {
-        service.deleteMessage(id);
-    }
+    // GET /api/messages/fail/1. Демонстрация LazyInitializationException (Proxy Exception)
+    @GetMapping("/fail/{id}")
+    public ResponseEntity<?> getMessageToFail(@PathVariable Long id) {
+        try {
+            MessageResponse message = service.getMessageToFail(id);
+            // Здесь происходит попытка сериализации в JSON
+            // Если автор LAZY и он не загружен, то будет ошибка
+            return ResponseEntity.ok(message);
 
-    @PostMapping("/batch")
-    @ResponseStatus(HttpStatus.CREATED) // Возвращаем 201 Created
-    public List<Message> createMessages(@RequestBody List<Message> messages) {
-        // если автор не указан Anonymous
-        for (Message message : messages) {
-            if (message != null && (message.getAuthor() == null || message.getAuthor().trim().isEmpty())) {
-                message.setAuthor("Anonymous");
-            }
+        } catch (Exception e) {
+            String errorMsg = "Ошибка! Проверьте консоль. Вероятно, LazyInitializationException (Proxy Exception), " +
+                    "потому что вы пытаетесь получить LAZY-поле вне транзакции. " +
+                    "Для решения: поместите метод getMessageToFail в @Transactional или используйте JOIN FETCH.";
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(errorMsg);
         }
-        return service.saveMessages(messages);
     }
 }
