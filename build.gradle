@@ -4,6 +4,22 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.7'
 }
 
+// Версии зависимостей Hibernate/JPA
+ext {
+	hibernateVersion = '7.4.5.Final'
+	h2Version = '2.4.240'
+}
+
+// Зависимости Hibernate/JPA
+dependencies {
+	// Spring Data JPA
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// Hibernate ORM
+	implementation "org.hibernate.orm:hibernate-core:${hibernateVersion}"
+	// H2
+	runtimeOnly "com.h2database:h2:${h2Version}"
+}
+
 group = 'com.example'
 version = '0.0.1-SNAPSHOT'
 
@@ -19,12 +35,40 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
-	runtimeOnly 'com.h2database:h2'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+// Кастомная задача: заполняет БД тестовыми сообщениями через curl
+tasks.register('runTestDataInitializer', Exec) {
+	group = 'application'
+	description = 'Отправляет POST-запросы на /api/messages'
+
+	def port = (project.findProperty('port') ?: '8081').toString()
+	def count = (project.findProperty('count') ?: '100').toString()
+	def users = (project.findProperty('users') ?: '10').toString()
+
+	// Скрипт bash: $1 — порт, $2 — количество сообщений, $3 — количество авторов
+	def script = '''
+if ! curl -s -o /dev/null "http://localhost:$1/api/messages/optimized"; then
+  echo "Приложение не отвечает на порту $1. Сначала запустите ./gradlew bootRun"
+  exit 1
+fi
+
+for i in $(seq 1 "$2"); do
+  user="user$(( i % $3 + 1 ))"
+  curl -s -o /dev/null -w "%{http_code} " \\
+    -X POST "http://localhost:$1/api/messages" \\
+    -H "Content-Type: application/json" \\
+    -d "{\\"content\\": \\"Test message $i\\", \\"username\\": \\"$user\\"}"
+done
+echo
+echo "Отправлено $2 сообщений от $3 авторов на порт $1"
+'''
+
+	commandLine 'bash', '-c', script, 'init', port, count, users
 }

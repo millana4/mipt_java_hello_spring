@@ -94,7 +94,6 @@ public class MessageService {
         return message;
     }
     */
-
     // Способ DTO: автор загружается тем же запросом, а наружу отдаётся DTO без объектов
     public MessageResponse getMessageToFail(Long id) {
         Message message = messageRepository.findWithAuthorById(id).orElseThrow();
