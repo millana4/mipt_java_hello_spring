@@ -17,7 +17,10 @@ dependencies {
 	// Hibernate ORM
 	implementation "org.hibernate.orm:hibernate-core:${hibernateVersion}"
 	// H2
-	runtimeOnly "com.h2database:h2:${h2Version}"
+	// Драйвер PostgreSQL — база, с которой работает приложение
+	runtimeOnly 'org.postgresql:postgresql'
+	// H2 — только для тестов (тесты не зависят от запущенной базы)
+	testRuntimeOnly "com.h2database:h2:${h2Version}"
 }
 
 group = 'com.example'

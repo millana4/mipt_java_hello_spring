@@ -61,4 +61,10 @@ public class MessageController {
                     .body(errorMsg);
         }
     }
+
+    // GET /api/messages — последние сообщения с авторами
+    @GetMapping
+    public List<Message> getMessages() {
+        return service.getLatestMessagesOptimized();
+    }
 }

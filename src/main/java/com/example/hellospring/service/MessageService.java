@@ -24,6 +24,11 @@ public class MessageService {
     }
 
     private void initializeSampleData() {
+        // стартовые данные добавляются только в пустую базу
+        if (userRepository.count() > 0) {
+            return;
+        }
+
         // Создание пользователей
         User user1 = userRepository.save(new User("Alice"));
         User user2 = userRepository.save(new User("Bob"));
