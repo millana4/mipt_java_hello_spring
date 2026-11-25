@@ -8,6 +8,7 @@ plugins {
 ext {
 	hibernateVersion = '7.4.5.Final'
 	h2Version = '2.4.240'
+	logstashLogbackVersion = '9.0'
 }
 
 // Зависимости Hibernate/JPA
@@ -38,6 +39,12 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+	// Actuator: служебные эндпоинты (health, info, metrics, prometheus)
+	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	// Экспорт метрик Micrometer в формате Prometheus
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+	// JSON-логирование через Logback
+	implementation "net.logstash.logback:logstash-logback-encoder:${logstashLogbackVersion}"
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

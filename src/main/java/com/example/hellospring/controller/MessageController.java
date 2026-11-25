@@ -3,25 +3,36 @@ package com.example.hellospring.controller;
 import com.example.hellospring.dto.MessageResponse;
 import com.example.hellospring.entity.Message;
 import com.example.hellospring.service.MessageService;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-// DTO для удобного приёма данных от клиента
 record CreateMessageRequest(String content, String username) {}
 
 @RestController
 @RequestMapping("/messages")
 public class MessageController {
     private final MessageService service;
+    private final Counter messagesCreatedCounter;
 
-    public MessageController(MessageService service) {
+    public MessageController(MessageService service, MeterRegistry meterRegistry) {
         this.service = service;
+        this.messagesCreatedCounter = Counter.builder("messages.created")
+                .description("Number of messages successfully saved to the database")
+                .register(meterRegistry);
     }
 
-    // GET /api/messages/optimized. Рекомендуемый подход: 1 SQL запрос для сообщений и авторов.
+    // GET /api/messages — последние сообщения с авторами
+    @GetMapping
+    public List<Message> getMessages() {
+        return service.getLatestMessagesOptimized();
+    }
+
+    // GET /api/messages/optimized. 1 SQL запрос для сообщений и авторов.
     @GetMapping("/optimized")
     public List<Message> getMessagesOptimized() {
         return service.getLatestMessagesOptimized();
@@ -41,16 +52,17 @@ public class MessageController {
                 ? "Anonymous"
                 : request.username();
 
-        return service.saveMessage(request.content(), username);
+        Message message = service.saveMessage(request.content(), username);
+        // Транзакция сервиса уже зафиксирована: сообщение точно сохранено в БД
+        messagesCreatedCounter.increment();
+        return message;
     }
 
-    // GET /api/messages/fail/1. Демонстрация LazyInitializationException (Proxy Exception)
+    // GET /api/messages/fail/1. Демонстрация LazyInitializationException
     @GetMapping("/fail/{id}")
     public ResponseEntity<?> getMessageToFail(@PathVariable Long id) {
         try {
             MessageResponse message = service.getMessageToFail(id);
-            // Здесь происходит попытка сериализации в JSON
-            // Если автор LAZY и он не загружен, то будет ошибка
             return ResponseEntity.ok(message);
 
         } catch (Exception e) {
@@ -60,11 +72,5 @@ public class MessageController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(errorMsg);
         }
-    }
-
-    // GET /api/messages — последние сообщения с авторами
-    @GetMapping
-    public List<Message> getMessages() {
-        return service.getLatestMessagesOptimized();
     }
 }

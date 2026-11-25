@@ -6,13 +6,16 @@ import com.example.hellospring.entity.User;
 import com.example.hellospring.repository.MessageRepository;
 import com.example.hellospring.repository.UserRepository;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.hibernate.Hibernate;
 
 import java.util.List;
 
 @Service
 public class MessageService {
+
+    private static final Logger log = LoggerFactory.getLogger(MessageService.class);
 
     private final MessageRepository messageRepository;
     private final UserRepository userRepository;
@@ -47,13 +50,15 @@ public class MessageService {
 
         // 2. Создать и сохранить сообщение
         Message message = new Message(content, author);
-        return messageRepository.save(message);
+        Message saved = messageRepository.save(message);
+        log.info("Сохранено сообщение id={} от пользователя {}", saved.getId(), username);
+        return saved;
     }
 
-    //Вариант А: Проблема N+1 -- один запрос за сообщениями + по запросу на каждого автора
+    // Вариант А: Проблема N+1 -- один запрос за сообщениями + по запросу на каждого автора
     @Transactional
     public List<Message> getLatestMessagesNPlus1() {
-        System.out.println("--- ЗАПРОС N+1 ---");
+        log.info("Загрузка последних сообщений: вариант N+1");
         List<Message> messages = messageRepository.findTop30ByOrderByCreatedAtDesc();
 
         // Принудительная загрузка автора для избежания Proxy Exception в контроллере.
@@ -62,17 +67,6 @@ public class MessageService {
         return messages;
     }
 
-    /**
-     * Вариант B: Решение проблемы N+1 с помощью JOIN FETCH.
-     * Все данные загружаются ОДНИМ запросом.
-
-    @Transactional
-    public List<Message> getLatestMessagesOptimized() {
-        System.out.println("--- ОПТИМИЗИРОВАННЫЙ ЗАПРОС JOIN FETCH ---");
-        return messageRepository.findLatestWithAuthors();
-    }
-     */
-
 
     /**
      * Вариант B: Решение проблемы N+1 с помощью @EntityGraph.
@@ -80,25 +74,11 @@ public class MessageService {
      */
     @Transactional
     public List<Message> getLatestMessagesOptimized() {
-        System.out.println("--- ОПТИМИЗИРОВАННЫЙ ЗАПРОС @EntityGraph ---");
+        log.info("Загрузка последних сообщений: оптимизированный запрос с @EntityGraph");
         return messageRepository.findTop30WithAuthorByOrderByCreatedAtDesc();
     }
 
-    /**
-    // Демонстрация LazyInitializationException: метод НЕ помечен @Transactional
-    public Message getMessageToFail(Long id) {
-        return messageRepository.findById(id).orElseThrow();
-    }
-     */
-    // Способ JPA: транзакция держит сессию открытой, пока выполняется метод
-    /**
-    @Transactional
-    public Message getMessageToFail(Long id) {
-        Message message = messageRepository.findById(id).orElseThrow();
-        Hibernate.initialize(message.getAuthor());
-        return message;
-    }
-    */
+
     // Способ DTO: автор загружается тем же запросом, а наружу отдаётся DTO без объектов
     public MessageResponse getMessageToFail(Long id) {
         Message message = messageRepository.findWithAuthorById(id).orElseThrow();
